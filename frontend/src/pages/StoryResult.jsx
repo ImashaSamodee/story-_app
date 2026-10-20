@@ -51,6 +51,7 @@ export default function StoryResult() {
   const imageSrc = getImageForCategory(imageCategory, character);
 
   const favoriteStory = {
+    id: storyData?.id,
     title,
     story: storyText,
     imageCategory,
@@ -63,20 +64,33 @@ export default function StoryResult() {
     setIsFavorite(savedStories.some((story) => story.title === title && story.story === storyText));
   }, [title, storyText]);
 
-  const handleFavorite = () => {
+  const handleFavorite = async () => {
+    const nextFavoriteState = !isFavorite;
+    setIsFavorite(nextFavoriteState);
+
+    // Update localStorage
     const savedStories = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) || '[]');
     const storyIndex = savedStories.findIndex((story) => story.title === title && story.story === storyText);
 
-    if (storyIndex >= 0) {
+    if (!nextFavoriteState && storyIndex >= 0) {
       savedStories.splice(storyIndex, 1);
-      setIsFavorite(false);
-    } else {
+      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(savedStories));
+    } else if (nextFavoriteState && storyIndex === -1) {
       localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([favoriteStory, ...savedStories]));
-      setIsFavorite(true);
-      return;
     }
 
-    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(savedStories));
+    // Update Supabase via backend if story ID exists
+    if (storyData?.id) {
+      try {
+        await fetch(`http://localhost:5000/api/stories/${storyData.id}/favorite`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isFavorite: nextFavoriteState }),
+        });
+      } catch (err) {
+        console.warn('Could not sync favorite to backend:', err);
+      }
+    }
   };
 
   const handleReadAloud = () => {
@@ -172,6 +186,25 @@ export default function StoryResult() {
             
             {/* Story Content */}
             <div className="w-full flex flex-col items-start">
+              {/* Badges */}
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                {storyData?.generatedBy === 'gemini' && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
+                    ✨ Gemini AI Story
+                  </span>
+                )}
+                {storyData?.generatedBy === 'openai' && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                    ✨ OpenAI Story
+                  </span>
+                )}
+                {storyData?.savedToDb && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
+                    ☁ Saved to Supabase
+                  </span>
+                )}
+              </div>
+
               {/* Dynamic Title Header */}
               <h2 className="text-2xl md:text-3xl font-black text-[#1E295B] mb-4 tracking-wide">
                 {title}

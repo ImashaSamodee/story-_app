@@ -1,10 +1,17 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-export default function Library() {
-  const navigate = useNavigate();
+const getImageForStory = (category, character) => {
+  const cat = (category || '').toLowerCase();
+  const char = (character || '').toLowerCase();
+  if (cat.includes('dragon') || char.includes('dragon')) return '/story_dragon_adventure.jpg';
+  if (cat.includes('owl') || char.includes('owl')) return '/story_owl_adventure.jpg';
+  if (cat.includes('bunny') || char.includes('bunny') || char.includes('rabbit')) return '/story_bunny_adventure.jpg';
+  if (cat.includes('penguin') || char.includes('penguin')) return '/story_penguin_adventure.jpg';
+  return '/story_bear_adventure.jpg';
+};
 
-  const savedStories = [
+const defaultSavedStories = [
     {
       id: 1,
       title: "The Dragon's Picnic",
@@ -98,10 +105,54 @@ export default function Library() {
     },
   ];
 
+export default function Library() {
+  const navigate = useNavigate();
+  const [storiesList, setStoriesList] = useState(defaultSavedStories);
+
+  useEffect(() => {
+    async function fetchStories() {
+      try {
+        const res = await fetch('http://localhost:5000/api/stories');
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.stories && data.stories.length > 0) {
+            const colors = [
+              { accentColor: 'border-purple-400', bgHeader: 'bg-[#A78BFA]', buttonBg: 'bg-emerald-400 hover:bg-emerald-500 shadow-[0_4px_0_#15803D]' },
+              { accentColor: 'border-emerald-400', bgHeader: 'bg-[#4ADE80]', buttonBg: 'bg-amber-400 hover:bg-amber-500 shadow-[0_4px_0_#C2410C]' },
+              { accentColor: 'border-amber-400', bgHeader: 'bg-[#FBBF24]', buttonBg: 'bg-indigo-500 hover:bg-indigo-600 shadow-[0_4px_0_#3730A3]' },
+              { accentColor: 'border-pink-400', bgHeader: 'bg-[#F472B6]', buttonBg: 'bg-sky-400 hover:bg-sky-500 shadow-[0_4px_0_#0284C7]' }
+            ];
+
+            const formatted = data.stories.map((s, index) => {
+              const theme = colors[index % colors.length];
+              return {
+                id: s.id,
+                title: s.title,
+                type: s.adventure_type || 'Magic Forest',
+                character: s.character || 'Brave Hero',
+                imageCategory: s.image_category || 'bear',
+                location: s.location || 'Magical Realm',
+                accentColor: theme.accentColor,
+                bgHeader: theme.bgHeader,
+                buttonBg: theme.buttonBg,
+                storyText: s.story,
+              };
+            });
+            setStoriesList(formatted);
+          }
+        }
+      } catch (err) {
+        console.warn('Backend stories not reachable, displaying local library:', err);
+      }
+    }
+    fetchStories();
+  }, []);
+
   const handleReadStory = (storyItem) => {
     navigate('/story', {
       state: {
         story: {
+          id: storyItem.id,
           title: storyItem.title,
           story: storyItem.storyText,
           imageCategory: storyItem.imageCategory,
@@ -168,16 +219,26 @@ export default function Library() {
           <div className="hidden sm:block text-amber-400 text-2xl rotate-45">🌠</div>
         </div>
 
-        {/* 3 Story Cards Grid */}
+        {/* Story Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
-          {savedStories.map((story) => (
+          {storiesList.map((story) => (
             <div
               key={story.id}
-              className={`bg-white rounded-3xl border-4 ${story.accentColor} shadow-lg overflow-hidden flex flex-col items-center transition-all hover:scale-105 duration-300`}
+              className={`bg-white rounded-3xl border-4 ${story.accentColor || 'border-amber-400'} shadow-lg overflow-hidden flex flex-col items-center transition-all hover:scale-105 duration-300`}
             >
-              {/* Header Icon Banner Area */}
-              <div className={`w-full ${story.bgHeader} h-44 flex items-center justify-center p-4 relative`}>
-                {story.icon}
+              {/* Header Icon / Image Banner Area */}
+              <div className={`w-full ${story.bgHeader || 'bg-amber-100'} h-44 flex items-center justify-center overflow-hidden relative`}>
+                {story.icon ? (
+                  <div className="p-4 flex items-center justify-center w-full h-full">
+                    {story.icon}
+                  </div>
+                ) : (
+                  <img
+                    src={getImageForStory(story.imageCategory, story.character)}
+                    alt={story.title}
+                    className="w-full h-full object-cover"
+                  />
+                )}
               </div>
 
               {/* Card Footer Body */}
@@ -188,7 +249,7 @@ export default function Library() {
 
                 <button
                   onClick={() => handleReadStory(story)}
-                  className={`${story.buttonBg} text-white font-extrabold text-lg px-8 py-2 rounded-full cursor-pointer transition-all active:translate-y-1 active:shadow-none select-none`}
+                  className={`${story.buttonBg || 'bg-amber-400 hover:bg-amber-500 shadow-[0_4px_0_#C2410C]'} text-white font-extrabold text-lg px-8 py-2 rounded-full cursor-pointer transition-all active:translate-y-1 active:shadow-none select-none`}
                 >
                   Read
                 </button>

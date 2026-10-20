@@ -17,18 +17,69 @@ const getImageForStory = (story) => {
 export default function Favorites() {
   const navigate = useNavigate();
   const [favoriteStories, setFavoriteStories] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedStories = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) || '[]');
-    setFavoriteStories(savedStories);
+    async function loadFavorites() {
+      const localSaved = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) || '[]');
+      try {
+        const res = await fetch('http://localhost:5000/api/favorites');
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.favorites && data.favorites.length > 0) {
+            // Map supabase column names to frontend format if needed
+            const dbStories = data.favorites.map((s) => ({
+              id: s.id,
+              title: s.title,
+              story: s.story,
+              imageCategory: s.image_category,
+              character: s.character,
+              location: s.location,
+              adventureType: s.adventure_type,
+            }));
+
+            // Merge unique with localSaved
+            const merged = [...dbStories];
+            localSaved.forEach((local) => {
+              if (!merged.some((m) => m.title === local.title && m.story === local.story)) {
+                merged.push(local);
+              }
+            });
+
+            setFavoriteStories(merged);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Backend favorites not reachable, falling back to localStorage:', err);
+      }
+
+      setFavoriteStories(localSaved);
+      setLoading(false);
+    }
+
+    loadFavorites();
   }, []);
 
-  const removeFavorite = (storyToRemove) => {
+  const removeFavorite = async (storyToRemove) => {
     const updatedStories = favoriteStories.filter(
       (story) => !(story.title === storyToRemove.title && story.story === storyToRemove.story),
     );
     localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(updatedStories));
     setFavoriteStories(updatedStories);
+
+    if (storyToRemove.id) {
+      try {
+        await fetch(`http://localhost:5000/api/stories/${storyToRemove.id}/favorite`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isFavorite: false }),
+        });
+      } catch (err) {
+        console.warn('Could not sync removal to Supabase:', err);
+      }
+    }
   };
 
   const openStory = (story) => {

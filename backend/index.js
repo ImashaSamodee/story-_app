@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const supabase = require('./supabaseClient');
+const { generateAIStory } = require('./aiStoryService');
 
 dotenv.config();
 
@@ -92,32 +94,220 @@ function generateCustomStory(adventureType, character, location) {
   return `${sentence1} ${sentence2} ${sentence3}`;
 }
 
-// POST /api/generate-story
-app.post('/api/generate-story', (req, res) => {
-  const { adventureType, character, location } = req.body || {};
+// POST /api/generate-story - Generates a story using AI (Gemini/OpenAI) and saves it to Supabase
+app.post('/api/generate-story', async (req, res) => {
+  try {
+    const { adventureType, character, location } = req.body || {};
 
-  const char = character || 'Leo the Brave Bear';
-  const loc = location || 'The Enchanted Castle';
-  const adv = adventureType || 'Magic Forest';
+    const char = character || 'Leo the Brave Bear';
+    const loc = location || 'The Enchanted Castle';
+    const adv = adventureType || 'Magic Forest';
 
-  const story = generateCustomStory(adv, char, loc);
-  const title = generateTitle(char, loc, adv);
-  const imageCategory = getImageCategory(char);
+    // 1. Generate story using AI Model (Google Gemini / OpenAI / creative fallback)
+    const aiResult = await generateAIStory({
+      character: char,
+      location: loc,
+      adventureType: adv,
+    });
 
-  return res.json({
-    success: true,
-    title: title,
-    story: story,
-    imageCategory: imageCategory,
-    adventureType: adv,
-    character: char,
-    location: loc
-  });
+    const title = aiResult.title || generateTitle(char, loc, adv);
+    const story = aiResult.story;
+    const generatedBy = aiResult.generatedBy;
+    const imageCategory = getImageCategory(char);
+
+    let savedRecord = null;
+    let savedToDb = false;
+
+    // 2. Save generated story to Supabase database
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('stories')
+          .insert([
+            {
+              title: title,
+              story: story,
+              adventure_type: adv,
+              character: char,
+              location: loc,
+              image_category: imageCategory,
+              is_favorite: false
+            }
+          ])
+          .select()
+          .single();
+
+        if (!error && data) {
+          savedRecord = data;
+          savedToDb = true;
+          console.log(`💾 [Supabase] Saved AI story "${title}" (ID: ${savedRecord.id}) to database.`);
+        } else if (error) {
+          console.error('Supabase insert warning:', error.message);
+        }
+      } catch (dbErr) {
+        console.error('Supabase insert error:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      id: savedRecord ? savedRecord.id : undefined,
+      title: title,
+      story: story,
+      imageCategory: imageCategory,
+      adventureType: adv,
+      character: char,
+      location: loc,
+      savedToDb: savedToDb,
+      generatedBy: generatedBy,
+      createdAt: savedRecord ? savedRecord.created_at : new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Error in /api/generate-story:', err);
+    return res.status(500).json({ success: false, message: 'Server error generating story' });
+  }
+});
+
+// GET /api/stories - Fetch all stories from Supabase
+app.get('/api/stories', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.json({
+        success: true,
+        stories: [],
+        source: 'local'
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('stories')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase fetch stories error:', error.message);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    return res.json({
+      success: true,
+      stories: data || [],
+      source: 'supabase'
+    });
+  } catch (err) {
+    console.error('Error in GET /api/stories:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// GET /api/favorites - Fetch all favorite stories from Supabase
+app.get('/api/favorites', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.json({
+        success: true,
+        favorites: [],
+        source: 'local'
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('stories')
+      .select('*')
+      .eq('is_favorite', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase fetch favorites error:', error.message);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    return res.json({
+      success: true,
+      favorites: data || [],
+      source: 'supabase'
+    });
+  } catch (err) {
+    console.error('Error in GET /api/favorites:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// PATCH /api/stories/:id/favorite - Toggle or update favorite status
+app.patch('/api/stories/:id/favorite', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isFavorite } = req.body;
+
+    if (!supabase) {
+      return res.json({
+        success: true,
+        id,
+        isFavorite,
+        message: 'Supabase not connected. Handled locally.'
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('stories')
+      .update({ is_favorite: Boolean(isFavorite) })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase update favorite error:', error.message);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    return res.json({
+      success: true,
+      story: data
+    });
+  } catch (err) {
+    console.error('Error in PATCH /api/stories/:id/favorite:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// DELETE /api/stories/:id - Delete story
+app.delete('/api/stories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!supabase) {
+      return res.json({ success: true, id, message: 'Supabase not connected.' });
+    }
+
+    const { error } = await supabase
+      .from('stories')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Supabase delete error:', error.message);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    return res.json({ success: true, message: 'Story deleted successfully', id });
+  } catch (err) {
+    console.error('Error in DELETE /api/stories/:id:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
 });
 
 // Root endpoint check
 app.get('/', (req, res) => {
-  res.send('Story Magic API Server is active and running!');
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '' && process.env.GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY');
+  const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim() !== '' && process.env.OPENAI_API_KEY !== 'YOUR_OPENAI_API_KEY');
+
+  res.json({
+    message: 'Story Magic API Server is active and running!',
+    supabaseConnected: Boolean(supabase),
+    aiEngine: geminiConfigured ? 'Google Gemini' : (openaiConfigured ? 'OpenAI' : 'Built-in Template Fallback'),
+    geminiConfigured,
+    openaiConfigured
+  });
 });
 
 // Start Server
